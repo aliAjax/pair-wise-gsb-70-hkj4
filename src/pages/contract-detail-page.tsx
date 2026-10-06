@@ -7,7 +7,9 @@ import {
   Download,
   FileWarning,
   GitCompare,
+  GitCommitHorizontal,
   Layers3,
+  Link2,
   LockKeyhole,
   Users,
 } from 'lucide-react';
@@ -101,10 +103,14 @@ export function ContractDetailPage() {
 
   async function updateChange(changeId: string, patch: Partial<ContractChange>) {
     if (!contract) return;
+    // 保存影响说明/迁移方案即视为按当前差异重新确认
+    const confirmsImpact = 'impactStatement' in patch || 'migrationPlan' in patch;
     await saveContract.mutateAsync({
       ...contract,
       changes: contract.changes.map((change) =>
-        change.id === changeId ? { ...change, ...patch } : change,
+        change.id === changeId
+          ? { ...change, ...patch, ...(confirmsImpact ? { impactStale: false } : {}) }
+          : change,
       ),
     });
   }
@@ -191,6 +197,35 @@ export function ContractDetailPage() {
         </div>
       </section>
 
+      {contract.definitionError && (
+        <div className="mt-4 flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4">
+          <FileWarning className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />
+          <div className="text-sm">
+            <strong className="text-red-900">接口定义解析失败或引用成环</strong>
+            <p className="mt-1 text-xs leading-5 text-red-800">
+              {contract.definitionError.message}。已保留上一份有效差异
+              {contract.diffSnapshot
+                ? `（计算于 ${formatDateTime(contract.diffSnapshot.computedAt)}，共 ${contract.diffSnapshot.changeCount} 项）`
+                : ''}
+              ，修复定义后重新保存即可恢复计算。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!contract.definitionError && contract.refSnapshot?.status === 'backfilled' && (
+        <div className="mt-4 flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-4">
+          <Link2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          <div className="text-sm">
+            <strong className="text-amber-900">引用快照待核</strong>
+            <p className="mt-1 text-xs leading-5 text-amber-800">
+              旧数据缺少引用快照，已按当前定义回填 {contract.refSnapshot.refs.length}{' '}
+              个共享定义的引用关系。请核对展开结果，重新保存定义后转为已确认。
+            </p>
+          </div>
+        </div>
+      )}
+
       <Tabs
         value={activeTab}
         onValueChange={setActiveTab}
@@ -214,6 +249,67 @@ export function ContractDetailPage() {
               saving={updateOpenApi.isPending}
             />
             <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>版本链快照</CardTitle>
+                  <p className="mt-1 text-xs text-slate-500">
+                    定义解析 → 引用展开 → 差异计算 → 发布门禁
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm">
+                  <SnapshotRow
+                    label="差异基线"
+                    value={
+                      contract.diffSnapshot?.baselineVersion
+                        ? `v${contract.diffSnapshot.baselineVersion}`
+                        : '无冻结基线'
+                    }
+                  />
+                  <SnapshotRow
+                    label="基线校验"
+                    value={contract.diffSnapshot?.baselineChecksum ?? '—'}
+                    mono
+                  />
+                  <SnapshotRow
+                    label="当前定义校验"
+                    value={contract.diffSnapshot?.sourceChecksum ?? '—'}
+                    mono
+                  />
+                  <SnapshotRow
+                    label="差异计算"
+                    value={
+                      contract.diffSnapshot
+                        ? `${formatDateTime(contract.diffSnapshot.computedAt)} · ${contract.diffSnapshot.changeCount} 项`
+                        : '尚未计算'
+                    }
+                  />
+                  <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+                    <span className="text-slate-600">引用展开</span>
+                    {contract.refSnapshot ? (
+                      <Badge tone={contract.refSnapshot.status === 'backfilled' ? 'amber' : 'green'}>
+                        {contract.refSnapshot.status === 'backfilled'
+                          ? `回填待核 · ${contract.refSnapshot.refs.length} 个共享定义`
+                          : `已确认 · ${contract.refSnapshot.refs.length} 个共享定义`}
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">缺失</Badge>
+                    )}
+                  </div>
+                  {!!contract.refSnapshot?.refs.length && (
+                    <ul className="space-y-1.5 border-t border-slate-100 pt-3">
+                      {contract.refSnapshot.refs.map((ref) => (
+                        <li key={ref.ref} className="text-xs">
+                          <span className="font-mono text-sky-900">{ref.ref}</span>
+                          <span className="mt-0.5 block text-slate-500">
+                            {ref.usedBy.join('、')}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
               <Card>
                 <CardHeader>
                   <CardTitle>评审进度</CardTitle>
@@ -272,6 +368,9 @@ export function ContractDetailPage() {
               <div>
                 <CardTitle>字段与错误码差异</CardTitle>
                 <p className="mt-1 text-xs text-slate-500">
+                  {contract.diffSnapshot?.baselineVersion
+                    ? `基线 v${contract.diffSnapshot.baselineVersion} · `
+                    : ''}
                   每种变化必须逐条接受、退回或申请兼容层
                 </p>
               </div>
@@ -424,6 +523,12 @@ export function ContractDetailPage() {
                         </span>
                       </div>
                       <p className="mt-2 text-xs leading-5 text-slate-600">{version.notes}</p>
+                      <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-500">
+                        <GitCommitHorizontal className="h-3 w-3" />
+                        {version.diffSnapshot
+                          ? `冻结时差异 ${version.diffSnapshot.changeCount} 项`
+                          : '冻结时未记录差异快照'}
+                      </p>
                     </button>
                   ))}
                   {!contract.versions.length && (
@@ -521,6 +626,23 @@ export function ContractDetailPage() {
           </div>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function SnapshotRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-slate-600">{label}</span>
+      <strong className={mono ? 'font-mono text-xs font-medium' : 'text-sm'}>{value}</strong>
     </div>
   );
 }

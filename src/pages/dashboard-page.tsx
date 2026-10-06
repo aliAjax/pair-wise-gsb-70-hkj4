@@ -37,6 +37,7 @@ import {
   type ContractStatus,
 } from '../models/contract';
 import { useContracts, useSaveContract } from '../services/contract-queries';
+import { recomputeContractDefinition } from '../services/diff-engine';
 
 type StatusFilter = ContractStatus | 'all';
 
@@ -97,7 +98,7 @@ export function DashboardPage() {
         throw new Error('OpenAPI 文档缺少 info.title');
       }
       const now = new Date().toISOString();
-      const contract: ApiContract = {
+      const draft: ApiContract = {
         id: `contract-${Date.now()}`,
         name: parsed.info.title,
         version: parsed.info.version ?? '0.1.0',
@@ -112,6 +113,11 @@ export function DashboardPage() {
         exemptions: [],
         versions: [],
       };
+      // 首次导入即建立引用与差异快照；尚无冻结基线，差异从首次冻结开始计算
+      const contract = recomputeContractDefinition(draft, draft.openapi, now);
+      if (contract.definitionError) {
+        throw new Error(contract.definitionError.message);
+      }
       await saveContract.mutateAsync(contract);
       setImportText('');
       setImportOpen(false);
@@ -278,6 +284,11 @@ export function DashboardPage() {
                               {pending ? `${pending} 待评审` : '评审完成'}
                             </Badge>
                             {breaking > 0 && <Badge tone="red">{breaking} 不兼容</Badge>}
+                            {contract.definitionError && <Badge tone="red">定义异常</Badge>}
+                            {!contract.definitionError &&
+                              contract.refSnapshot?.status === 'backfilled' && (
+                                <Badge tone="amber">引用待核</Badge>
+                              )}
                           </div>
                         </td>
                         <td className="px-4 py-4 text-slate-700">

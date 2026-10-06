@@ -6,6 +6,7 @@ import type {
   ReviewState,
 } from '../models/contract';
 import { stableChecksum, formatDateTime } from '../lib/utils';
+import { backfillContractSnapshot, recomputeContractDefinition } from './diff-engine';
 
 const STORAGE_KEY = 'pair-wise-gsb-70-contracts';
 const LATENCY = 180;
@@ -18,12 +19,31 @@ async function wait(): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, LATENCY));
 }
 
+/** 评审结论、影响说明等用户标注同步进差异快照，保证失败恢复时不丢失 */
+function withSyncedSnapshot(contract: ApiContract): ApiContract {
+  if (!contract.diffSnapshot) return contract;
+  return {
+    ...contract,
+    diffSnapshot: {
+      ...contract.diffSnapshot,
+      changes: contract.changes,
+      changeCount: contract.changes.length,
+    },
+  };
+}
+
 export async function listContracts(): Promise<ApiContract[]> {
   await wait();
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
     try {
-      return JSON.parse(stored) as ApiContract[];
+      const parsed = JSON.parse(stored) as ApiContract[];
+      // 旧数据缺少引用/差异快照时按当前定义回填，并标记为待核
+      const migrated = parsed.map((contract) => backfillContractSnapshot(contract));
+      if (migrated.some((contract, index) => contract !== parsed[index])) {
+        persistContracts(migrated);
+      }
+      return migrated;
     } catch {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -40,7 +60,7 @@ export async function getContract(id: string): Promise<ApiContract | undefined> 
 export async function saveContract(updated: ApiContract): Promise<ApiContract> {
   const contracts = await listContracts();
   const exists = contracts.some((contract) => contract.id === updated.id);
-  const saved = { ...updated, updatedAt: new Date().toISOString() };
+  const saved = withSyncedSnapshot({ ...updated, updatedAt: new Date().toISOString() });
   const next = exists
     ? contracts.map((contract) => (contract.id === updated.id ? saved : contract))
     : [saved, ...contracts];
@@ -62,7 +82,7 @@ export async function reviewChange(
     throw new Error('契约不存在');
   }
 
-  const updated: ApiContract = {
+  const updated: ApiContract = withSyncedSnapshot({
     ...contract,
     status: contract.status === 'draft' ? 'review' : contract.status,
     changes: contract.changes.map((change) =>
@@ -76,7 +96,7 @@ export async function reviewChange(
           }
         : change,
     ),
-  };
+  });
   persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
@@ -90,24 +110,26 @@ export async function bulkReviewChanges(
 ): Promise<ApiContract[]> {
   const contracts = await listContracts();
   const selected = new Set(selections.map((item) => `${item.contractId}:${item.changeId}`));
-  const updated = contracts.map((contract) => ({
-    ...contract,
-    status:
-      selected.has(`${contract.id}:${contract.changes[0]?.id}`) && contract.status === 'draft'
-        ? ('review' as const)
-        : contract.status,
-    changes: contract.changes.map((change) =>
-      selected.has(`${contract.id}:${change.id}`)
-        ? {
-            ...change,
-            reviewState,
-            reviewer,
-            reviewComment: comment,
-            reviewedAt: new Date().toISOString(),
-          }
-        : change,
-    ),
-  }));
+  const updated = contracts.map((contract) =>
+    withSyncedSnapshot({
+      ...contract,
+      status:
+        selected.has(`${contract.id}:${contract.changes[0]?.id}`) && contract.status === 'draft'
+          ? ('review' as const)
+          : contract.status,
+      changes: contract.changes.map((change) =>
+        selected.has(`${contract.id}:${change.id}`)
+          ? {
+              ...change,
+              reviewState,
+              reviewer,
+              reviewComment: comment,
+              reviewedAt: new Date().toISOString(),
+            }
+          : change,
+      ),
+    }),
+  );
   persistContracts(updated);
   await wait();
   return clone(updated);
@@ -122,7 +144,10 @@ export async function updateContractOpenApi(
   if (!contract) {
     throw new Error('契约不存在');
   }
-  const updated = { ...contract, openapi, updatedAt: new Date().toISOString() };
+  // 导入新版本定义：解析 → 展开引用 → 按冻结基线重算差异；
+  // 失败时从完整差异快照恢复，重复导入不产生第二份差异
+  const now = new Date().toISOString();
+  const updated = { ...recomputeContractDefinition(contract, openapi, now), updatedAt: now };
   persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
@@ -146,13 +171,13 @@ export async function addExemption(
     approvedBy: '当前评审人',
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
   };
-  const updated: ApiContract = {
+  const updated: ApiContract = withSyncedSnapshot({
     ...contract,
     exemptions: [...contract.exemptions, exemption],
     changes: contract.changes.map((change) =>
       change.id === changeId ? { ...change, reviewState: 'exemption' } : change,
     ),
-  };
+  });
   persistContracts(contracts.map((item) => (item.id === contractId ? updated : item)));
   await wait();
   return clone(updated);
@@ -178,6 +203,8 @@ export async function freezeVersion(
     notes,
     changeIds: contract.changes.map((change) => change.id),
     openapi: contract.openapi,
+    // 冻结时把完整差异快照挂上版本链，作为后续导入的基线
+    diffSnapshot: contract.diffSnapshot,
   };
   const updated: ApiContract = {
     ...contract,
@@ -236,12 +263,24 @@ export function generateExampleRequest(contract: ApiContract, change?: ContractC
 }
 
 export function buildChangeReport(contract: ApiContract): string {
+  const snapshot = contract.diffSnapshot;
+  const refSnapshot = contract.refSnapshot;
   const lines = [
     `# ${contract.name} ${contract.version} 契约变更报告`,
     '',
     `- 领域：${contract.domain}`,
     `- 负责人：${contract.owner}`,
     `- 状态：${contract.status}`,
+    `- 差异基线：${snapshot?.baselineVersion ? `v${snapshot.baselineVersion}（${snapshot.baselineChecksum ?? '无校验值'}）` : '无冻结基线'}`,
+    `- 定义校验值：${snapshot?.sourceChecksum ?? '未计算'}`,
+    `- 引用快照：${
+      refSnapshot
+        ? refSnapshot.status === 'backfilled'
+          ? `回填待核（${refSnapshot.refs.length} 个共享定义）`
+          : `已确认（${refSnapshot.refs.length} 个共享定义）`
+        : '缺失'
+    }`,
+    ...(contract.definitionError ? [`- 定义异常：${contract.definitionError.message}`] : []),
     `- 生成时间：${new Date().toISOString()}`,
     '',
     '## 变更明细',
@@ -251,9 +290,10 @@ export function buildChangeReport(contract: ApiContract): string {
       `- 变更前：${change.before}`,
       `- 变更后：${change.after}`,
       `- 判定依据：${change.rationale}`,
-      `- 调用方影响：${change.impactStatement || '未填写'}`,
+      `- 调用方影响：${change.impactStatement || '未填写'}${change.impactStale ? '（待按新差异确认）' : ''}`,
       `- 迁移方案：${change.migrationPlan || '未填写'}`,
       `- 评审结论：${change.reviewState}`,
+      ...(change.invalidatedReason ? [`- 失效说明：${change.invalidatedReason}`] : []),
       '',
     ]),
     '## 调用方',
@@ -265,7 +305,8 @@ export function buildChangeReport(contract: ApiContract): string {
     '## 豁免记录',
     ...(contract.exemptions.length
       ? contract.exemptions.map(
-          (item) => `- ${item.scope}：${item.reason}（至 ${item.expiresAt}）`,
+          (item) =>
+            `- ${item.scope}：${item.reason}（至 ${item.expiresAt}）${item.invalidatedAt ? '【已失效，需按新差异重新登记】' : ''}`,
         )
       : ['- 无']),
   ];
@@ -273,15 +314,16 @@ export function buildChangeReport(contract: ApiContract): string {
 }
 
 export function diffVersionSummary(contract: ApiContract): string {
-  const previous = contract.versions[0];
-  if (!previous) {
-    return '无可比较的历史正式版本。';
+  const snapshot = contract.diffSnapshot;
+  if (!snapshot) {
+    return '尚无差异快照，保存接口定义后生成。';
   }
   return [
-    `上一版 ${previous.version}`,
-    `发布于 ${formatDateTime(previous.releasedAt)}`,
-    `校验值 ${previous.checksum}`,
-    `本版变更 ${contract.changes.length} 项`,
+    snapshot.baselineVersion
+      ? `基线版本 v${snapshot.baselineVersion}（${snapshot.baselineChecksum ?? '无校验值'}）`
+      : '无冻结基线，差异从首次冻结后开始计算',
+    `当前定义校验 ${snapshot.sourceChecksum}`,
+    `差异 ${snapshot.changeCount} 项 · 计算于 ${formatDateTime(snapshot.computedAt)}`,
   ].join('\n');
 }
 

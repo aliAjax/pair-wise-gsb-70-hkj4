@@ -46,6 +46,12 @@ export function ChangeReviewItem({
           <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
             {change.rationale}
           </p>
+          {change.invalidatedReason && change.reviewState === 'pending' && (
+            <p className="mt-2 inline-flex rounded-sm border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] leading-4 text-amber-800">
+              {change.invalidatedReason}
+              {change.reviewer ? `（原评审人 ${change.reviewer}）` : ''}
+            </p>
+          )}
         </div>
         <div className="text-left text-xs text-slate-500 lg:text-right">
           <div>评审人：{change.reviewer || '未指定'}</div>
@@ -77,6 +83,11 @@ export function ChangeReviewItem({
           <div>
             <label className="mb-1.5 block text-xs font-medium text-slate-700">
               调用方影响说明
+              {change.impactStale && (
+                <Badge tone="amber" className="ml-2">
+                  待按新差异确认
+                </Badge>
+              )}
             </label>
             <Textarea
               value={impact}

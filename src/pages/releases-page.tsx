@@ -84,6 +84,7 @@ export function ReleasesPage() {
                     <th className="px-4 py-3 font-medium">版本</th>
                     <th className="px-4 py-3 font-medium">发布时间</th>
                     <th className="px-4 py-3 font-medium">校验值</th>
+                    <th className="px-4 py-3 font-medium">冻结差异</th>
                     <th className="px-4 py-3 font-medium">发布说明</th>
                     <th className="px-4 py-3 font-medium" />
                   </tr>
@@ -103,6 +104,13 @@ export function ReleasesPage() {
                       </td>
                       <td className="px-4 py-4 font-mono text-xs text-slate-600">
                         {release.checksum}
+                      </td>
+                      <td className="px-4 py-4 text-slate-600">
+                        {release.diffSnapshot ? (
+                          `${release.diffSnapshot.changeCount} 项`
+                        ) : (
+                          <span className="text-slate-400">未记录</span>
+                        )}
                       </td>
                       <td className="max-w-md px-4 py-4 text-slate-600">{release.notes}</td>
                       <td className="px-4 py-4 text-right">

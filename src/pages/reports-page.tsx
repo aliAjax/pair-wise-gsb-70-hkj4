@@ -128,15 +128,44 @@ export function ReportsPage() {
                 {contract.exemptions.map((exemption) => (
                   <article
                     key={exemption.id}
-                    className="rounded-md border border-blue-200 bg-blue-50 p-3"
+                    className={
+                      exemption.invalidatedAt
+                        ? 'rounded-md border border-slate-200 bg-slate-50 p-3'
+                        : 'rounded-md border border-blue-200 bg-blue-50 p-3'
+                    }
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-blue-950">{exemption.scope}</strong>
-                      <Badge tone="blue">至 {exemption.expiresAt}</Badge>
+                      <strong
+                        className={
+                          exemption.invalidatedAt ? 'text-sm text-slate-600' : 'text-sm text-blue-950'
+                        }
+                      >
+                        {exemption.scope}
+                      </strong>
+                      {exemption.invalidatedAt ? (
+                        <Badge tone="neutral">已失效</Badge>
+                      ) : (
+                        <Badge tone="blue">至 {exemption.expiresAt}</Badge>
+                      )}
                     </div>
-                    <p className="mt-2 text-xs leading-5 text-blue-900">{exemption.reason}</p>
-                    <div className="mt-2 text-[11px] text-blue-800">
+                    <p
+                      className={
+                        exemption.invalidatedAt
+                          ? 'mt-2 text-xs leading-5 text-slate-500'
+                          : 'mt-2 text-xs leading-5 text-blue-900'
+                      }
+                    >
+                      {exemption.reason}
+                    </p>
+                    <div
+                      className={
+                        exemption.invalidatedAt
+                          ? 'mt-2 text-[11px] text-slate-500'
+                          : 'mt-2 text-[11px] text-blue-800'
+                      }
+                    >
                       批准人：{exemption.approvedBy}
+                      {exemption.invalidatedAt && ' · 契约定义变化后失效，需按新差异重新登记'}
                     </div>
                   </article>
                 ))}
