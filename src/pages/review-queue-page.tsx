@@ -18,7 +18,9 @@ import { Textarea } from '../components/ui/textarea';
 import { formatDateTime } from '../lib/utils';
 import {
   CHANGE_KIND_LABELS,
+  DIRECTION_LABELS,
   REVIEW_STATE_LABELS,
+  contractChanges,
   type ContractChange,
   type ReviewState,
 } from '../models/contract';
@@ -50,7 +52,7 @@ export function ReviewQueuePage() {
     () =>
       (contracts.data ?? [])
         .flatMap((contract) =>
-          contract.changes.map((change) => ({
+          contractChanges(contract).map((change) => ({
             contractId: contract.id,
             contractName: contract.name,
             version: contract.version,
@@ -198,7 +200,18 @@ export function ReviewQueuePage() {
                       </div>
                       <div className="mt-2 text-sm font-medium text-slate-900">
                         {CHANGE_KIND_LABELS[item.change.kind]}
+                        {item.change.field && (
+                          <span className="ml-2 font-mono text-xs font-normal text-slate-500">
+                            {DIRECTION_LABELS[item.change.direction]} · {item.change.field}
+                          </span>
+                        )}
                       </div>
+                      {item.change.invalidatedFrom && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                          旧结论已失效（{REVIEW_STATE_LABELS[item.change.invalidatedFrom.reviewState]}
+                          ），定义变化后需重审
+                        </p>
+                      )}
                       <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-500">
                         {item.change.rationale}
                       </p>

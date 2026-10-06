@@ -1,10 +1,12 @@
-import { Check, CornerUpLeft, Layers3, Save } from 'lucide-react';
+import { Check, CornerUpLeft, Layers3, Save, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
 import {
   CHANGE_KIND_LABELS,
+  DIRECTION_LABELS,
+  REVIEW_STATE_LABELS,
   type ContractChange,
   type ReviewState,
 } from '../../models/contract';
@@ -37,21 +39,47 @@ export function ChangeReviewItem({
             <span className="font-mono text-xs font-semibold text-sky-900">
               {change.method} {change.path}
             </span>
+            <Badge tone={change.direction === 'request' ? 'blue' : 'neutral'}>
+              {DIRECTION_LABELS[change.direction]}
+            </Badge>
             <CompatibilityBadge value={change.compatibility} />
             <ReviewStateBadge value={change.reviewState} />
           </div>
           <h3 className="mt-2 text-sm font-semibold text-slate-900">
             {CHANGE_KIND_LABELS[change.kind]}
+            {change.field && (
+              <span className="ml-2 font-mono text-xs font-normal text-slate-600">
+                {change.field}
+              </span>
+            )}
           </h3>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
             {change.rationale}
           </p>
+          {change.refs.length > 0 && (
+            <p className="mt-1 max-w-3xl font-mono text-[11px] leading-5 text-slate-500">
+              经共享定义展开：{change.refs.join(' → ')}
+            </p>
+          )}
         </div>
         <div className="text-left text-xs text-slate-500 lg:text-right">
           <div>评审人：{change.reviewer || '未指定'}</div>
           <div className="mt-1">结论：{change.reviewComment || '尚无意见'}</div>
         </div>
       </div>
+
+      {change.invalidatedFrom && (
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+          <p className="text-xs leading-5 text-amber-900">
+            旧评审结论已失效：{REVIEW_STATE_LABELS[change.invalidatedFrom.reviewState]}
+            {change.invalidatedFrom.reviewer && ` · ${change.invalidatedFrom.reviewer}`}
+            {change.invalidatedFrom.reviewComment &&
+              ` · ${change.invalidatedFrom.reviewComment}`}
+            。契约定义已变化，调用方说明需按新差异重新确认。
+          </p>
+        </div>
+      )}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-md border border-slate-200 bg-slate-50 p-3">

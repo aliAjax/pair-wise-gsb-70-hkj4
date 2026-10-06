@@ -32,7 +32,7 @@ export function ContractEditor({ contract, onSave, saving }: ContractEditorProps
       </div>
       <Editor
         height="430px"
-        language="plaintext"
+        language="json"
         theme="vs"
         value={value}
         onChange={(nextValue) => setValue(nextValue ?? '')}

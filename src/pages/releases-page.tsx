@@ -96,7 +96,12 @@ export function ReleasesPage() {
                         <div className="mt-1 text-xs text-slate-500">{contract.domain}</div>
                       </td>
                       <td className="px-4 py-4">
-                        <Badge tone="slate">v{release.version}</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge tone="slate">v{release.version}</Badge>
+                          <span className="text-xs text-slate-500">
+                            {release.changes.length} 项变更
+                          </span>
+                        </div>
                       </td>
                       <td className="px-4 py-4 text-slate-600">
                         {formatDateTime(release.releasedAt)}
@@ -212,9 +217,9 @@ export function ReleasesPage() {
               <CardTitle>冻结策略</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4 text-sm text-slate-600">
-              <Policy icon={Archive} text="版本快照包含完整 OpenAPI 和变更清单。" />
-              <Policy icon={PackageCheck} text="新版本发布不会覆盖旧版记录。" />
-              <Policy icon={LockKeyhole} text="冻结后通过差异编辑器与当前工作副本比较。" />
+              <Policy icon={Archive} text="版本快照归档完整 OpenAPI、引用快照与评审后差异。" />
+              <Policy icon={PackageCheck} text="冻结后成为新基线，后续导入按基线展开引用重算差异。" />
+              <Policy icon={LockKeyhole} text="重复导入同值定义不产生第二份差异，失败导入保留上一份有效差异。" />
             </CardContent>
           </Card>
         </div>

@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { ReviewState } from '../models/contract';
+import type { ContractChange, ReviewState } from '../models/contract';
 import {
   addExemption,
+  applyContractDefinition,
   bulkReviewChanges,
+  confirmDiffSnapshot,
   freezeVersion,
   getContract,
+  importContractDocument,
   listContracts,
   reviewChange,
-  saveContract,
-  updateContractOpenApi,
+  updateChangeStatements,
 } from './contract-service';
 
 export const contractKeys = {
@@ -71,19 +73,39 @@ export function useBulkReview() {
   });
 }
 
-export function useUpdateOpenApi() {
+export function useApplyDefinition() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { contractId: string; openapi: string }) =>
-      updateContractOpenApi(input.contractId, input.openapi),
+    mutationFn: (input: { contractId: string; source: string }) =>
+      applyContractDefinition(input.contractId, input.source),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: contractKeys.all }),
   });
 }
 
-export function useSaveContract() {
+export function useImportContract() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: saveContract,
+    mutationFn: (source: string) => importContractDocument(source),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: contractKeys.all }),
+  });
+}
+
+export function useUpdateStatements() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      contractId: string;
+      changeId: string;
+      patch: Partial<Pick<ContractChange, 'impactStatement' | 'migrationPlan'>>;
+    }) => updateChangeStatements(input.contractId, input.changeId, input.patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: contractKeys.all }),
+  });
+}
+
+export function useConfirmDiff() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (contractId: string) => confirmDiffSnapshot(contractId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: contractKeys.all }),
   });
 }

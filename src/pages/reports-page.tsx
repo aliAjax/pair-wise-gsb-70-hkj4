@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { formatDateTime } from '../lib/utils';
+import { contractChanges } from '../models/contract';
 import { buildChangeReport } from '../services/contract-service';
 import { useContracts } from '../services/contract-queries';
 import { useReviewStore } from '../store/review-store';
@@ -24,7 +25,8 @@ export function ReportsPage() {
     contracts.data?.[0];
 
   const report = useMemo(() => (contract ? buildChangeReport(contract) : ''), [contract]);
-  const reviewed = contract?.changes.filter((change) => change.reviewState !== 'pending') ?? [];
+  const changes = contract ? contractChanges(contract) : [];
+  const reviewed = changes.filter((change) => change.reviewState !== 'pending');
 
   return (
     <div>
@@ -90,9 +92,10 @@ export function ReportsPage() {
           {contract && (
             <div className="flex flex-wrap gap-2 sm:ml-auto">
               <Badge tone="blue">{contract.domain}</Badge>
-              <Badge tone="neutral">{contract.changes.length} 个变化</Badge>
-              <Badge tone={reviewed.length === contract.changes.length ? 'green' : 'amber'}>
-                {reviewed.length === contract.changes.length ? '评审完成' : '仍有待评审项'}
+              <Badge tone="neutral">{changes.length} 个变化</Badge>
+              {contract.diff?.status === 'stale' && <Badge tone="amber">快照待核对</Badge>}
+              <Badge tone={reviewed.length === changes.length ? 'green' : 'amber'}>
+                {reviewed.length === changes.length ? '评审完成' : '仍有待评审项'}
               </Badge>
             </div>
           )}
@@ -125,21 +128,53 @@ export function ReportsPage() {
                 </p>
               </CardHeader>
               <CardContent className="space-y-3">
-                {contract.exemptions.map((exemption) => (
-                  <article
-                    key={exemption.id}
-                    className="rounded-md border border-blue-200 bg-blue-50 p-3"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-sm text-blue-950">{exemption.scope}</strong>
-                      <Badge tone="blue">至 {exemption.expiresAt}</Badge>
-                    </div>
-                    <p className="mt-2 text-xs leading-5 text-blue-900">{exemption.reason}</p>
-                    <div className="mt-2 text-[11px] text-blue-800">
-                      批准人：{exemption.approvedBy}
-                    </div>
-                  </article>
-                ))}
+                {contract.exemptions.map((exemption) => {
+                  const invalidated = exemption.status === 'invalidated';
+                  return (
+                    <article
+                      key={exemption.id}
+                      className={
+                        invalidated
+                          ? 'rounded-md border border-slate-200 bg-slate-50 p-3'
+                          : 'rounded-md border border-blue-200 bg-blue-50 p-3'
+                      }
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <strong
+                          className={
+                            invalidated ? 'text-sm text-slate-600' : 'text-sm text-blue-950'
+                          }
+                        >
+                          {exemption.scope}
+                        </strong>
+                        <Badge tone={invalidated ? 'neutral' : 'blue'}>
+                          {invalidated ? '已失效' : `至 ${exemption.expiresAt}`}
+                        </Badge>
+                      </div>
+                      <p
+                        className={
+                          invalidated
+                            ? 'mt-2 text-xs leading-5 text-slate-500'
+                            : 'mt-2 text-xs leading-5 text-blue-900'
+                        }
+                      >
+                        {exemption.reason}
+                      </p>
+                      {invalidated && exemption.invalidatedReason && (
+                        <p className="mt-1 text-[11px] text-slate-400">
+                          失效原因：{exemption.invalidatedReason}
+                        </p>
+                      )}
+                      <div
+                        className={
+                          invalidated ? 'mt-2 text-[11px] text-slate-400' : 'mt-2 text-[11px] text-blue-800'
+                        }
+                      >
+                        批准人：{exemption.approvedBy}
+                      </div>
+                    </article>
+                  );
+                })}
                 {!contract.exemptions.length && (
                   <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
                     当前没有兼容层豁免。
@@ -153,7 +188,7 @@ export function ReportsPage() {
                 <CardTitle>评审签名</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {contract.changes.map((change) => (
+                {changes.map((change) => (
                   <div
                     key={change.id}
                     className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3 last:border-0 last:pb-0"

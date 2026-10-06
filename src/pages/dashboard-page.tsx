@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Boxes,
   FileJson,
+  FileWarning,
   GitBranch,
   Plus,
   Search,
@@ -33,23 +34,24 @@ import { Textarea } from '../components/ui/textarea';
 import { formatDateTime } from '../lib/utils';
 import {
   CONTRACT_STATUS_LABELS,
-  type ApiContract,
+  contractChanges,
   type ContractStatus,
 } from '../models/contract';
-import { useContracts, useSaveContract } from '../services/contract-queries';
+import { useContracts, useImportContract } from '../services/contract-queries';
 
 type StatusFilter = ContractStatus | 'all';
 
 export function DashboardPage() {
   const navigate = useNavigate();
   const contracts = useContracts();
-  const saveContract = useSaveContract();
+  const importContractMutation = useImportContract();
   const [query, setQuery] = useState('');
   const [domain, setDomain] = useState('all');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importError, setImportError] = useState('');
+  const [importNotice, setImportNotice] = useState('');
 
   const domains = useMemo(
     () => Array.from(new Set((contracts.data ?? []).map((contract) => contract.domain))),
@@ -74,48 +76,41 @@ export function DashboardPage() {
     const data = contracts.data ?? [];
     const pending = data.reduce(
       (sum, contract) =>
-        sum + contract.changes.filter((change) => change.reviewState === 'pending').length,
+        sum + contractChanges(contract).filter((change) => change.reviewState === 'pending').length,
       0,
     );
     const breaking = data.reduce(
       (sum, contract) =>
-        sum + contract.changes.filter((change) => change.compatibility === 'breaking').length,
+        sum +
+        contractChanges(contract).filter((change) => change.compatibility === 'breaking').length,
       0,
     );
+    const stale = data.filter((contract) => contract.diff?.status === 'stale').length;
     const consumers = data.reduce((sum, contract) => sum + contract.consumers.length, 0);
-    return { pending, breaking, consumers, total: data.length };
+    return { pending, breaking, stale, consumers, total: data.length };
   }, [contracts.data]);
 
   async function importContract() {
     setImportError('');
+    setImportNotice('');
     try {
-      const parsed = JSON.parse(importText) as {
-        info?: { title?: string; version?: string };
-        servers?: Array<{ url?: string }>;
-      };
-      if (!parsed.info?.title) {
-        throw new Error('OpenAPI 文档缺少 info.title');
+      const result = await importContractMutation.mutateAsync(importText);
+      if (result.outcome.type === 'duplicate') {
+        setImportNotice(
+          `与现有契约《${result.contract.name}》当前定义一致，未产生第二份差异。`,
+        );
+        return;
       }
-      const now = new Date().toISOString();
-      const contract: ApiContract = {
-        id: `contract-${Date.now()}`,
-        name: parsed.info.title,
-        version: parsed.info.version ?? '0.1.0',
-        domain: '待分类',
-        owner: '当前用户',
-        protocol: 'REST',
-        status: 'draft',
-        updatedAt: now,
-        openapi: JSON.stringify(parsed, null, 2),
-        changes: [],
-        consumers: [],
-        exemptions: [],
-        versions: [],
-      };
-      await saveContract.mutateAsync(contract);
+      if (result.outcome.type === 'kept-last-valid') {
+        setImportError(`导入未生效：${result.outcome.reason}`);
+        return;
+      }
       setImportText('');
       setImportOpen(false);
-      await navigate({ to: '/contracts/$contractId', params: { contractId: contract.id } });
+      await navigate({
+        to: '/contracts/$contractId',
+        params: { contractId: result.contract.id },
+      });
     } catch (error) {
       setImportError(error instanceof Error ? error.message : '无法解析接口定义');
     }
@@ -146,7 +141,8 @@ export function DashboardPage() {
             <DialogHeader>
               <DialogTitle>导入 OpenAPI 文档</DialogTitle>
               <DialogDescription>
-                粘贴 JSON 格式的 OpenAPI 定义。本地演示环境会创建契约草稿并写入 localStorage。
+                粘贴 JSON 格式的 OpenAPI 定义。info.title 命中已有契约时按新版本导入，
+                以最近冻结版本为基线展开引用并重算差异；否则创建契约草稿。
               </DialogDescription>
             </DialogHeader>
             <Textarea
@@ -156,23 +152,26 @@ export function DashboardPage() {
               placeholder={'{\n  "openapi": "3.1.0",\n  "info": { "title": "示例 API", "version": "1.0.0" },\n  "paths": {}\n}'}
             />
             {importError && <p className="mt-2 text-sm text-red-700">{importError}</p>}
+            {importNotice && (
+              <p className="mt-2 text-sm text-slate-600">{importNotice}</p>
+            )}
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="secondary" onClick={() => setImportOpen(false)}>
                 取消
               </Button>
               <Button
                 onClick={() => void importContract()}
-                disabled={!importText.trim() || saveContract.isPending}
+                disabled={!importText.trim() || importContractMutation.isPending}
               >
                 <Upload className="h-4 w-4" />
-                {saveContract.isPending ? '导入中' : '创建契约'}
+                {importContractMutation.isPending ? '导入中' : '导入'}
               </Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
-      <section className="mb-5 grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="mb-5 grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 sm:grid-cols-2 xl:grid-cols-5">
         <Metric label="管理契约" value={metrics.total} note="REST 接口定义" icon={Boxes} />
         <Metric label="待评审变化" value={metrics.pending} note="需要逐条结论" icon={GitBranch} />
         <Metric
@@ -181,6 +180,13 @@ export function DashboardPage() {
           note="需迁移或兼容层"
           icon={ShieldAlert}
           danger
+        />
+        <Metric
+          label="待核对快照"
+          value={metrics.stale}
+          note="旧数据回填待确认"
+          icon={FileWarning}
+          danger={metrics.stale > 0}
         />
         <Metric label="依赖调用方" value={metrics.consumers} note="跨团队客户端" icon={FileJson} />
       </section>
@@ -252,10 +258,11 @@ export function DashboardPage() {
                 </thead>
                 <tbody>
                   {filtered.map((contract) => {
-                    const pending = contract.changes.filter(
+                    const contractChangeList = contractChanges(contract);
+                    const pending = contractChangeList.filter(
                       (change) => change.reviewState === 'pending',
                     ).length;
-                    const breaking = contract.changes.filter(
+                    const breaking = contractChangeList.filter(
                       (change) => change.compatibility === 'breaking',
                     ).length;
                     return (
@@ -270,7 +277,12 @@ export function DashboardPage() {
                           </div>
                         </td>
                         <td className="px-4 py-4">
-                          <StatusBadge status={contract.status} />
+                          <div className="flex flex-wrap gap-1.5">
+                            <StatusBadge status={contract.status} />
+                            {contract.diff?.status === 'stale' && (
+                              <Badge tone="amber">待核对</Badge>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-4">
                           <div className="flex flex-wrap gap-1.5">
